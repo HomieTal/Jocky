@@ -1,0 +1,51 @@
+# process_triage.jky — memory/process forensics (read-only, manual §8.1)
+
+@authorization {
+    case_id: "PROC-001"
+    investigator: "Demo Analyst"
+    organization: "JOCKY Prototype"
+    authorized_by: "Self-Test"
+    scope: "sys, mem"
+    valid_until: "2026-12-31T23:59:59Z"
+}
+
+@requires privilege.user
+@platform windows
+
+let host = collect sys.info
+print f"host: {host[0]['hostname']} ({host[0]['os']})"
+
+# Top memory consumers
+let top = collect mem.processes
+    where process.memory_mb > 100
+    sort by process.memory_mb desc
+    limit 15
+print f"{len(top)} processes above 100 MB"
+foreach p in top {
+    print f"  {p.pid:>6}  {p.name:<28} {p.memory_mb:>8} MB  cpu={p.cpu_pct}%"
+}
+
+# Unsigned executables running on this host
+let unsigned = collect mem.processes
+    where process.is_signed == false and process.path != ""
+    sort by process.memory_mb desc
+print f"unsigned executables running: {len(unsigned)}"
+foreach u in unsigned {
+    alert HIGH f"unsigned executable: {u.name} (PID {u.pid}) {u.path}"
+}
+
+# Look for common LOL-bins
+let lol_bins = ["cmd.exe", "powershell.exe", "wscript.exe", "cscript.exe", "mshta.exe"]
+let lol = collect mem.processes where process.name in lol_bins
+if len(lol) > 0 {
+    alert MEDIUM f"{len(lol)} LOL-bin process(es) currently running"
+}
+
+# Locate one specific process by name using a module function
+let explorer = mem.find_process("explorer.exe")
+if explorer != null {
+    print f"explorer.exe -> PID {explorer['pid']}, {explorer['memory_mb']} MB"
+}
+
+export top to json "process_top.json"
+export unsigned to csv "process_unsigned.csv"

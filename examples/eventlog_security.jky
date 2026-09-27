@@ -1,0 +1,47 @@
+# eventlog_security.jky — Windows Security channel triage (manual §12.1)
+#
+# NOTE: the Security channel requires the investigating process to run as
+# Administrator (or as a member of Event Log Readers). JOCKY refuses to
+# read it otherwise with E060 COLLECT_FAILED — by design, no silent
+# escalation. Run JOCKY elevated for this script.
+
+@authorization {
+    case_id: "EVT-001"
+    investigator: "Demo Analyst"
+    organization: "JOCKY Prototype"
+    authorized_by: "Self-Test"
+    scope: "log"
+    valid_until: "2026-12-31T23:59:59Z"
+}
+
+@requires privilege.admin
+@platform windows
+
+# Failed logons (4625) in the last 24 hours
+let failed = collect log.windows_events(channel: "Security",
+                                        event_id: "4625",
+                                        max: 200, within_hours: 24)
+print f"failed logons (4625) in last 24h: {len(failed)}"
+foreach e in failed {
+    print f"  {e.time}  {e.user}  {e.message}"
+}
+if len(failed) > 20 {
+    alert HIGH f"possible brute force: {len(failed)} failed logons in 24h"
+}
+
+# Successful interactive logons (4624)
+let logons = collect log.windows_events(channel: "Security",
+                                        event_id: "4624",
+                                        max: 100, within_hours: 24)
+print f"successful logons (4624) in last 24h: {len(logons)}"
+
+# Process creation events (4688) — needs audit process creation enabled
+let proc_events = collect log.windows_events(channel: "Security",
+                                             event_id: "4688",
+                                             max: 100, within_hours: 24)
+foreach e in proc_events {
+    alert MEDIUM f"process creation: {e.message}"
+}
+
+export failed to json "evt_4625_failed_logons.json"
+export logons to csv "evt_4624_logons.csv"

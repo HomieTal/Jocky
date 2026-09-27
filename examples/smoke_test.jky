@@ -1,0 +1,124 @@
+# smoke_test.jky — JOCKY.exe feature test (safe, read-only, ~15 seconds)
+#
+# Purpose: verify the packaged executable end-to-end.
+#   1. Open this file in JOCKY.exe (File Open)
+#   2. Validate  -> expect "Validation OK"
+#   3. Compile   -> check the IR tab shows this script's .jir
+#   4. Run       -> watch the console output and the alerts below
+#   5. Results / Evidence / Action Log tabs must fill with live data
+#   6. Export JSON and Export HTML -> open the generated report
+#
+# Expected console outcome:
+#   - prints the host banner and 6 test sections
+#   - raises 1 HIGH (unsigned procs, if any), 1 MEDIUM (unusual remote
+#     ports, if any) and 1 LOW always
+#   - status COMPLETED, evidence artifacts >= 5, integrity VERIFIED
+
+@authorization {
+    case_id: "SMOKE-001"
+    investigator: "Prototype Tester"
+    organization: "JOCKY Prototype"
+    authorized_by: "Self-Test"
+    scope: "sys, mem, net"
+    valid_until: "2026-12-31T23:59:59Z"
+}
+
+@requires privilege.user
+@platform windows
+
+print "=============================================="
+print " JOCKY.EXE SMOKE TEST — case SMOKE-001"
+print "=============================================="
+
+# --- test 1: constants, arithmetic, typeof, f-string format specs ----------
+const ANSWER: int = 42
+let ratio = 7 / 2
+print f"[T1] answer={ANSWER}  ratio={ratio:.3f}  hex={0xFF:>5}  typeof(ANSWER)={typeof(ANSWER)}"
+if ANSWER == 42 and 0xFF == 255 and typeof(ratio) == "float" {
+    print "[T1] PASS — literals, arithmetic, typeof, format specs"
+} else {
+    alert HIGH "[T1] FAIL — basic expression evaluation broken"
+}
+
+# --- test 2: user function + list pipeline --------------------------------
+func top_count(items, min_value) {
+    let kept = items | where entry >= min_value
+    return len(kept)
+}
+
+let numbers = [3, 17, 8, 42, 5, 23]
+let big = top_count(numbers, 10)
+print f"[T2] numbers >= 10: {big} (expect 3)"
+if big == 3 {
+    print "[T2] PASS — functions, pipelines on lists, scalar item access"
+} else {
+    alert HIGH "[T2] FAIL — function/pipeline evaluation broken"
+}
+
+# --- test 3: real collection — host system info -----------------------------
+let host = collect sys.info
+let h = host[0]
+print f"[T3] host={h['hostname']}  os={h['os']}"
+print f"[T3] cpu cores={h['cores']}  ram={h['memory_total_mb']} MB  elevated={h['elevated']}"
+if h['hostname'] != "" {
+    print "[T3] PASS — sys.info collector returned live host data"
+} else {
+    alert CRITICAL "[T3] FAIL — sys.info returned no hostname"
+}
+
+# --- test 4: process forensics (top memory, unsigned check) -----------------
+let procs = collect mem.processes
+    where process.memory_mb > 20
+    sort by process.memory_mb desc
+    limit 8
+print f"[T4] top {len(procs)} processes by memory:"
+foreach p in procs {
+    print f"      {p.pid:>6}  {p.name:<26} {p.memory_mb:>8} MB  signed={p.is_signed}"
+}
+
+let unsigned = collect mem.processes
+    where process.is_signed == false and process.path != ""
+if len(unsigned) > 0 {
+    alert HIGH f"[T4] {len(unsigned)} running executable(s) failed signature verification"
+} else {
+    print "[T4] all running executables verified — no alert"
+}
+
+# --- test 5: network forensics ----------------------------------------------
+let conns = collect net.connections
+    where connection.state == "ESTABLISHED"
+    sort by connection.local_port asc
+    limit 10
+print f"[T5] established connections (first {len(conns)}):"
+foreach c in conns {
+    print f"      {c.process_name:<24} {c.local_addr}:{c.local_port} -> {c.remote_addr}:{c.remote_port}"
+}
+
+let odd_ports = conns
+    | where connection.remote_addr != ""
+    | where connection.remote_port not in [80, 443, 53, 123, 8080, 8443]
+    | where not connection.remote_addr startswith "127."
+if len(odd_ports) > 0 {
+    alert MEDIUM f"[T5] {len(odd_ports)} connection(s) to unusual remote ports"
+} else {
+    print "[T5] no connections to unusual remote ports"
+}
+
+# --- test 6: map/list indexing and export -----------------------------------
+let summary = {
+    "case": "SMOKE-001",
+    "processes_checked": len(procs),
+    "unsigned_found": len(unsigned),
+    "connections_sampled": len(conns),
+}
+print f"[T6] summary map -> unsigned_found={summary['unsigned_found']}"
+alert LOW f"[T6] smoke test finished — {summary['processes_checked']} procs, {summary['connections_sampled']} conns sampled"
+
+export host to json "smoke_host.json"
+export procs to csv "smoke_top_processes.csv"
+export conns to json "smoke_connections.json"
+
+print "=============================================="
+print " SMOKE TEST COMPLETE — check Evidence tab:"
+print " expect >= 5 artifacts, status VERIFIED"
+print "=============================================="

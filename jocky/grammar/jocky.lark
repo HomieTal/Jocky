@@ -1,0 +1,253 @@
+// JOCKY grammar — LALR(1), Lark
+// Reference: "JOCKY Forensic Language — Complete Manual", Appendix D (EBNF)
+//
+// Newlines terminate statements; they are dropped inside ( ) and [ ] and
+// before continuation keywords (where/and/or/...) by the JOCKY postlexer,
+// which enables the manual's multi-line declarative pipeline style.
+//
+// collect arguments use postfix-call syntax: collect disk.files("C:", depth: 2)
+// and are folded into the CollectExpr node by the transformer.
+
+start: ( sep | item )*
+
+?item: directive | statement
+
+sep: (_NL | SEMI)+
+
+// ---- directives -----------------------------------------------------------
+
+directive: authorization_block
+         | requires_directive
+         | platform_directive
+         | plugin_directive
+
+authorization_block: AUTHORIZATION LBRACE sep* (auth_field sep*)+ RBRACE
+auth_field: IDENT COLON field_value
+field_value: STRING | INT | FLOAT
+
+requires_directive: REQUIRES req_item (COMMA req_item)*
+req_item: PRIVILEGE | CAPABILITY
+
+platform_directive: PLATFORM IDENT
+plugin_directive: PLUGIN STRING
+
+// ---- statements ------------------------------------------------------------
+
+?statement: let_stmt
+          | const_stmt
+          | func_def
+          | if_stmt
+          | while_stmt
+          | foreach_stmt
+          | export_stmt
+          | alert_stmt
+          | print_stmt
+          | return_stmt
+          | break_stmt
+          | continue_stmt
+          | assign_stmt
+          | expr_stmt
+
+let_stmt: LET IDENT (COLON type)? EQUALS expr
+const_stmt: CONST IDENT (COLON type)? EQUALS expr
+assign_stmt: IDENT EQUALS expr
+
+func_def: FUNC IDENT LPAR params? RPAR (COLON type)? block
+params: param (COMMA param)*
+param: IDENT (COLON type)? (EQUALS expr)?
+
+type: TYPE_INT | TYPE_FLOAT | TYPE_STR | TYPE_BOOL | TYPE_LIST | TYPE_MAP
+    | TYPE_PROCESS | TYPE_FILE | TYPE_CONNECTION | TYPE_REGKEY | TYPE_EVENT
+
+if_stmt: IF expr block (ELIF expr block)* (ELSE block)?
+block: LBRACE (sep | statement)* RBRACE
+
+while_stmt: WHILE expr block
+foreach_stmt: FOREACH IDENT IN expr block
+
+export_stmt: EXPORT expr? (TO export_format STRING)?
+export_format: FORMAT_JSON | FORMAT_CSV | FORMAT_HTML | FORMAT_PDF
+             | FORMAT_STIX | FORMAT_PCAP | FORMAT_BINARY | FORMAT_DIR
+
+alert_stmt: ALERT severity? expr
+severity: SEV_LOW | SEV_MEDIUM | SEV_HIGH | SEV_CRITICAL
+
+print_stmt: PRINT expr
+return_stmt: RETURN expr?
+break_stmt: BREAK
+continue_stmt: CONTINUE
+expr_stmt: expr
+
+// ---- expressions -----------------------------------------------------------
+
+?expr: pipeline
+
+?pipeline: disjunction stage*
+stage: PIPE? (where_clause | sort_clause | limit_clause)
+where_clause: WHERE disjunction
+sort_clause: SORT BY name (ASC | DESC)?
+limit_clause: LIMIT INT
+
+?disjunction: conjunction (OR conjunction)*
+?conjunction: inversion (AND inversion)*
+?inversion: NOT inversion | comparison
+?comparison: sum (compare_rest | not_word_rest)*
+compare_rest: (EQ | NEQ | LT | GT | LE | GE | IN) sum
+            | (MATCHES | CONTAINS | STARTSWITH | ENDSWITH) sum
+not_word_rest: NOT (IN | MATCHES | CONTAINS | STARTSWITH | ENDSWITH) sum
+
+?sum: term ((PLUS | MINUS) term)*
+?term: factor ((STAR | SLASH | DSLASH | PERCENT) factor)*
+?factor: unary (POWER factor)?
+?unary: MINUS unary | TILDE unary | BANG unary | postfix
+
+?postfix: primary trailer*
+trailer: LPAR arglist? RPAR
+       | LSQB expr RSQB
+       | LSQB expr? COLON expr? RSQB
+       | DOT IDENT
+
+?primary: literal
+        | fstring
+        | name
+        | collect_expr
+        | LPAR expr RPAR
+        | list_literal
+        | map_literal
+
+literal: INT | FLOAT | STRING | RSTRING | TRUE | FALSE | NULL
+fstring: FSTRING
+
+name: IDENT (DOT IDENT)*
+collect_expr: COLLECT module_path
+            | SNAPSHOT module_path
+module_path: IDENT DOT IDENT
+
+arglist: argument (COMMA argument)*
+argument: IDENT COLON expr | expr
+
+list_literal: LSQB (expr (COMMA expr)* COMMA?)? RSQB
+map_literal: LBRACE (map_pair (COMMA map_pair)* COMMA?)? sep* RBRACE
+map_pair: STRING COLON expr
+
+// helper start rule used to parse expressions inside f-string braces
+expr_test: pipeline
+
+// ---- terminals --------------------------------------------------------------
+
+AUTHORIZATION: "@authorization"
+REQUIRES: "@requires"
+PLATFORM: "@platform"
+PLUGIN: "@plugin"
+
+LET: "let"
+CONST: "const"
+FUNC: "func"
+IF: "if"
+ELIF: "elif"
+ELSE: "else"
+WHILE: "while"
+FOREACH: "foreach"
+IN: "in"
+BREAK: "break"
+CONTINUE: "continue"
+RETURN: "return"
+
+COLLECT: "collect"
+SNAPSHOT: "snapshot"
+WHERE: "where"
+SORT: "sort"
+LIMIT: "limit"
+EXPORT: "export"
+ALERT: "alert"
+BY: "by"
+ASC: "asc"
+DESC: "desc"
+TO: "to"
+
+PRINT: "print"
+AND: "and"
+OR: "or"
+NOT: "not"
+TRUE: "true"
+FALSE: "false"
+NULL: "null"
+
+MATCHES: "matches"
+CONTAINS: "contains"
+STARTSWITH: "startswith"
+ENDSWITH: "endswith"
+
+FORMAT_JSON: "json"
+FORMAT_CSV: "csv"
+FORMAT_HTML: "html"
+FORMAT_PDF: "pdf"
+FORMAT_STIX: "stix"
+FORMAT_PCAP: "pcap"
+FORMAT_BINARY: "binary"
+FORMAT_DIR: "dir"
+
+SEV_LOW.6: "LOW"
+SEV_MEDIUM.6: "MEDIUM"
+SEV_HIGH.6: "HIGH"
+SEV_CRITICAL.6: "CRITICAL"
+
+TYPE_INT: "int"
+TYPE_FLOAT: "float"
+TYPE_STR: "str"
+TYPE_BOOL: "bool"
+TYPE_LIST: "list"
+TYPE_MAP: "map"
+TYPE_PROCESS: "process"
+TYPE_FILE: "file"
+TYPE_CONNECTION: "connection"
+TYPE_REGKEY: "regkey"
+TYPE_EVENT: "event"
+
+PRIVILEGE: "privilege.user" | "privilege.admin"
+CAPABILITY.2: /[A-Z][A-Z0-9_]{3,}/
+
+IDENT: /[a-zA-Z_][a-zA-Z_0-9]*/
+
+COMMA: ","
+COLON: ":"
+SEMI: ";"
+DOT: "."
+EQUALS: "="
+PIPE: "|"
+POWER: "**"
+PLUS: "+"
+MINUS: "-"
+STAR: "*"
+SLASH: "/"
+DSLASH: "//"
+PERCENT: "%"
+TILDE: "~"
+BANG: "!"
+EQ: "=="
+NEQ: "!="
+LE: "<="
+GE: ">="
+LT: "<"
+GT: ">"
+LPAR: "("
+RPAR: ")"
+LSQB: "["
+RSQB: "]"
+LBRACE: "{"
+RBRACE: "}"
+
+FSTRING: /f("([^"\\\n]|\\.)*"|'([^'\\\n]|\\.)*')/
+RSTRING: /r("([^"\\\n]|\\.)*"|'([^'\\\n]|\\.)*')/
+STRING.3: /("([^"\\\n]|\\.)*"|'([^'\\\n]|\\.)*')/
+FLOAT.2: /\d+\.\d*([eE][+-]?\d+)?|\.\d+([eE][+-]?\d+)?|\d+[eE][+-]?\d+/
+INT.1: /0[xX][0-9a-fA-F]+|0[bB][01]+|0[oO][0-7]+|\d+/
+
+_COMMENT: /\/\/[^\n]*/ | /#[^\n]*/
+_BLOCKCOMMENT: /\/\*([^*]|\*+[^*\/])*\*+\//
+_NL: /\r?\n/
+
+%import common.WS_INLINE
+%ignore WS_INLINE
+%ignore _COMMENT
+%ignore _BLOCKCOMMENT

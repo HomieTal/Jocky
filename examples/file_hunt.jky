@@ -1,0 +1,50 @@
+# file_hunt.jky — file-system forensics with hashing (read-only, §9.1/§9.5)
+#
+// Multi-line block comments are supported too:
+/*
+   Every file below is only read (metadata + optional SHA-256/MD5).
+   JOCKY never modifies, executes, encrypts or deletes collected files.
+*/
+
+@authorization {
+    case_id: "FILE-001"
+    investigator: "Demo Analyst"
+    organization: "JOCKY Prototype"
+    authorized_by: "Self-Test"
+    scope: "disk"
+    valid_until: "2026-12-31T23:59:59Z"
+}
+
+@requires privilege.user
+@platform windows
+
+# Executables in the user's Downloads folder, hashed
+let home = env("USERPROFILE")
+let downloads = collect disk.files(path: home + "\\Downloads",
+                                   depth: 2, extension: ".exe",
+                                   hash: true, max_files: 300)
+print f"executables in Downloads: {len(downloads)}"
+foreach f in downloads {
+    print f"  {f.name}  {f.size_bytes} bytes  sha256={f.sha256}"
+    alert LOW f"downloaded executable: {f.path} ({f.sha256})"
+}
+
+# Hidden files in the user profile (top level only)
+let hidden = collect disk.files(path: home, depth: 1, hidden: true)
+let hidden_only = hidden | where file.is_hidden == true
+print f"hidden items in profile root: {len(hidden_only)}"
+
+# Recently modified documents (last 48 hours)
+let recent = collect disk.files(path: home + "\\Documents",
+                                depth: 3, modified_within_hours: 48,
+                                max_files: 1000)
+print f"documents modified in last 48h: {len(recent)}"
+
+# Hash one of the files just enumerated with the disk.hash module function
+if len(recent) > 0 {
+    let note = disk.hash(recent[0]["path"], algo: "sha256")
+    print f"sha256 of {recent[0]['name']}: {note}"
+}
+
+export downloads to json "files_downloads_hashed.json"
+export recent to csv "files_recent_documents.csv"

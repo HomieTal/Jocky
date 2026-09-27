@@ -1,0 +1,81 @@
+# demo.jky — JOCKY demonstration script (SIH 2026 prototype)
+# Safe, read-only triage of this Windows machine. Every collection below
+# writes a .jrf evidence record and a .jal action-log entry automatically.
+
+@authorization {
+    case_id: "DEMO-001"
+    investigator: "Demo Analyst"
+    organization: "JOCKY Prototype"
+    authorized_by: "Self-Test"
+    scope: "sys, mem, net, reg, log, disk"
+    valid_until: "2026-12-31T23:59:59Z"
+}
+
+@requires privilege.user
+@platform windows
+
+print "=== JOCKY DEMO: authorized Windows triage ==="
+
+# --- 1. Host system information -------------------------------------------
+let host = collect sys.info
+print "host: " + host[0]["os"]
+
+# --- 2. Running processes (top memory consumers) ---------------------------
+let procs = collect mem.processes
+    where process.memory_mb > 50
+    sort by process.memory_mb desc
+    limit 10
+print "top-memory processes: " + len(procs)
+foreach p in procs {
+    print f"  PID {p.pid}  {p.name}  {p.memory_mb} MB  signed={p.is_signed}"
+}
+
+# --- 3. Unsigned / unverified executables in memory ------------------------
+let unsigned = collect mem.processes
+    where process.is_signed == false and process.path != ""
+if len(unsigned) > 0 {
+    alert HIGH f"{len(unsigned)} running executables without a verifiable signature"
+}
+
+# --- 4. Active network connections -----------------------------------------
+let conns = collect net.connections
+    where connection.state == "ESTABLISHED"
+    sort by connection.remote_addr asc
+    limit 20
+print f"established connections: {len(conns)}"
+
+# --- 5. Registry autoruns (persistence locations) ---------------------------
+let autoruns = collect reg.autoruns
+print f"registry autorun entries: {len(autoruns)}"
+let unsigned_runs = autoruns | where entry.is_signed == false
+if len(unsigned_runs) > 0 {
+    alert MEDIUM f"{len(unsigned_runs)} autorun entries are not signature-verified"
+}
+
+# --- 6. Windows event log: service installations ----------------------------
+# (The Security channel needs Administrator; System channel events such as
+#  7045 "A service was installed" are readable by any user and are a classic
+#  persistence indicator.)
+let svc_events = collect log.windows_events(channel: "System",
+                                            event_id: "7045",
+                                            max: 50, within_hours: 720)
+if len(svc_events) > 0 {
+    alert MEDIUM f"{len(svc_events)} services installed in the last 30 days (7045)"
+} else {
+    print "no service installations (7045) in the last 30 days"
+}
+
+# --- 7. File forensics: executables dropped in Temp -------------------------
+let recent = collect disk.files(path: "C:\\Windows\\Temp", depth: 2,
+                                extension: ".exe", max_files: 200)
+print f"executables in C:\\Windows\\Temp: {len(recent)}"
+
+# --- 8. Export findings -----------------------------------------------------
+export host to json "demo_host.json"
+export procs to csv "demo_top_processes.csv"
+export conns to json "demo_connections.json"
+export autoruns to json "demo_autoruns.json"
+export svc_events to json "demo_service_events.json"
+export recent to json "demo_temp_executables.json"
+
+print "=== DEMO COMPLETE: evidence written as .jrf, actions logged as .jal ==="

@@ -1,0 +1,58 @@
+# registry_persistence.jky — registry forensics (read-only, Windows-only, §11)
+
+@authorization {
+    case_id: "REG-001"
+    investigator: "Demo Analyst"
+    organization: "JOCKY Prototype"
+    authorized_by: "Self-Test"
+    scope: "reg"
+    valid_until: "2026-12-31T23:59:59Z"
+}
+
+@requires privilege.user
+@platform windows
+
+# --- Autoruns (persistence locations, §11.2) -------------------------------
+let autoruns = collect reg.autoruns
+print f"autorun entries: {len(autoruns)}"
+foreach a in autoruns {
+    print f"  [{a.signature_status}] {a.location}"
+    print f"      {a.data}"
+}
+
+# Flag unsigned or file-missing autorun payloads
+let suspicious = autoruns
+    | where entry.is_signed == false
+    | where entry.data != ""
+if len(suspicious) > 0 {
+    alert HIGH f"{len(suspicious)} autorun entries without a valid signature"
+}
+
+# --- Services (§11.1) --------------------------------------------------------
+let services = collect reg.services(limit: 400)
+let auto_services = services | where entry.start_mode == "Automatic"
+print f"services: {len(services)} total, {len(auto_services)} automatic"
+let svc_paths = auto_services
+    | where entry.image_path != ""
+    | where not entry.image_path startswith "C:\\Windows"
+if len(svc_paths) > 0 {
+    alert MEDIUM f"{len(svc_paths)} automatic services run from outside C:\\Windows"
+}
+
+# --- UserAssist (GUI program execution, ROT13-decoded, §11.4) ----------------
+let ua = collect reg.userassist
+print f"UserAssist entries: {len(ua)} (decoded from ROT13)"
+let lol_bins = ["mshta.exe", "wscript.exe", "cscript.exe", "cmd.exe", "powershell.exe"]
+let lol_ua = ua | where entry.program contains "mshta"
+if len(lol_ua) > 0 {
+    alert MEDIUM f"mshta execution evidence in UserAssist ({len(lol_ua)} entries)"
+}
+
+# --- MRU (recently used files) -----------------------------------------------
+let mru = collect reg.mru
+print f"OpenSave MRU entries: {len(mru)}"
+
+export autoruns to json "reg_autoruns.json"
+export services to csv "reg_services.csv"
+export ua to json "reg_userassist.json"
+export mru to json "reg_mru.json"

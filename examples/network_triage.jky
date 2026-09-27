@@ -1,0 +1,55 @@
+# network_triage.jky — network forensics (read-only, manual §10)
+
+@authorization {
+    case_id: "NET-001"
+    investigator: "Demo Analyst"
+    organization: "JOCKY Prototype"
+    authorized_by: "Self-Test"
+    scope: "net"
+    valid_until: "2026-12-31T23:59:59Z"
+}
+
+@requires privilege.user
+@platform windows
+
+# Active connections: external, established, non-web ports
+let established = collect net.connections
+    where connection.state == "ESTABLISHED"
+print f"established connections: {len(established)}"
+
+let unusual = established
+    | where connection.remote_port not in [80, 443, 8080, 8443, 53, 123]
+    | where connection.remote_addr != ""
+    | where not connection.remote_addr startswith "10."
+    | where not connection.remote_addr startswith "192.168."
+    | where not connection.remote_addr startswith "127."
+foreach c in unusual {
+    alert MEDIUM f"unusual remote port: {c.process_name} (PID {c.pid}) -> {c.remote_addr}:{c.remote_port}"
+}
+
+# Everything listening on TCP
+let listeners = collect net.connections
+    where connection.state == "LISTEN"
+    sort by connection.local_port asc
+print f"listening sockets: {len(listeners)}"
+
+# Interfaces, ARP, routing, DNS
+let ifaces = collect net.interfaces
+let arp = collect net.arp_table
+let routes = collect net.routing_table
+let dns = collect net.dns_cache
+print f"interfaces: {len(ifaces)}, ARP entries: {len(arp)}, routes: {len(routes)}, DNS cache: {len(dns)}"
+
+# ARP spoofing indicator: one MAC claiming several IPs
+let dns_recent = dns | where entry.name != "" | sort by entry.ttl asc | limit 25
+foreach d in dns_recent {
+    if d.ttl != null {
+        print f"  dns: {d.name} -> {d.data} (ttl {d.ttl}s)"
+    }
+}
+
+export established to json "net_established.json"
+export listeners to csv "net_listeners.csv"
+export routes to json "net_routes.json"
+export arp to json "net_arp.json"
+export dns to csv "net_dns.csv"
